@@ -1,121 +1,196 @@
+
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import http from 'http';
-import {WebSocketServer} from 'ws';
-import { Chess } from "chess.js";
-
+import { WebSocket, WebSocketServer } from 'ws';
 
 dotenv.config();
 
-
 const app = express();
-const port = process.env.PORT;
-const myserver = http.createServer(app);
+app.use(cors());
+app.use(express.json());
+
+const port = process.env.PORT || 3000;
+const server = http.createServer(app);
+const wss = new WebSocketServer({ server });
 
 const rooms = new Map();
 
+function send(client, data) {
+  if (client.readyState === WebSocket.OPEN) {
+    client.send(JSON.stringify(data));
+  }
+}
 
-const wss = new WebSocketServer({server: myserver});
+function notifyOpponents(roomid) {
+  const clients = rooms.get(roomid);
+  if (!clients) return;
 
-wss.on('connection', (socket)=>{
-    console.log('socket connected');
-    socket.on('message', (msg)=>{
-        const message = JSON.parse(msg);
-        if(message.type==='join-room'){
-            const roomid = message.roomid
-            socket.name = message.name;
-            socket.roomid = message.roomid;
-            if(!rooms.has(roomid)){
-                rooms.set(roomid, new Set()); //create a room if it doesnt exist
-            }
-            const clients = rooms.get(roomid);
-            if(clients.size >= 2){
-                socket.send(JSON.stringify({
-                    type: 'error',
-                    msg: '2 people already exist in this room',
-                }))
-                return ;
-            }
-            clients.add(socket);
+  for (const client of clients) {
+    const opponents = [...clients]
+      .filter(other => other !== client)
+      .map(other => other.name);
 
-            
-            const names = Array.from(clients).map(client => client.name);
+    send(client, {
+      type: 'opponent',
+      opponent: opponents,
+    });
+  }
+}
 
-            clients.forEach((client)=>{
-                client.send(JSON.stringify({
-                    opponent: names.filter(name=> name!==client.name),
-                    type: 'opponent',
-                }))
-            })
+function removeClient(socket) {
+  const roomid = socket.roomid;
+  if (!roomid || !rooms.has(roomid)) return;
+
+  const clients = rooms.get(roomid);
+  clients.delete(socket);
+
+  if (clients.size === 0) {
+    rooms.delete(roomid);
+  } else {
+    notifyOpponents(roomid);
+  }
+
+  socket.roomid = null;
+}
+
+wss.on('connection', socket => {
+  console.log('WebSocket client connected');
+
+  socket.on('message', rawMessage => {
+    let message;
+
+    try {
+      message = JSON.parse(rawMessage.toString());
+    } catch {
+      send(socket, {
+        type: 'error',
+        msg: 'Invalid JSON message',
+      });
+      return;
+    }
+
+    const { type, roomid } = message;
+
+    if (type === 'join-room') {
+      if (!roomid || !message.name) {
+        send(socket, {
+          type: 'error',
+          msg: 'Room ID and player name are required',
+        });
+        return;
+      }
+
+      // Avoid adding the same socket to multiple rooms.
+      if (socket.roomid) {
+        removeClient(socket);
+      }
+
+      let clients = rooms.get(roomid);
+
+      if (!clients) {
+        clients = new Set();
+        rooms.set(roomid, clients);
+      }
+
+      if (clients.size >= 2) {
+        send(socket, {
+          type: 'error',
+          msg: 'Two players already exist in this room',
+        });
+
+        if (clients.size === 0) rooms.delete(roomid);
+        return;
+      }
+
+      socket.name = message.name;
+      socket.roomid = roomid;
+      clients.add(socket);
+
+      console.log(`${socket.name} joined room ${roomid}`);
+
+      notifyOpponents(roomid);
+      return;
+    }
+
+    // Ignore messages from clients that have not joined a room.
+    if (!socket.roomid || socket.roomid !== roomid) {
+      send(socket, {
+        type: 'error',
+        msg: 'Join the correct room before sending messages',
+      });
+      return;
+    }
+
+    const clients = rooms.get(roomid);
+    if (!clients) return;
+
+    const broadcastToOthers = data => {
+      for (const client of clients) {
+        if (client !== socket) {
+          send(client, data);
         }
+      }
+    };
 
-        if(message.type==='move'){
-            const clients = rooms.get(message.roomid);
-            clients.forEach((client) => {
-                if (client !== socket && client.readyState === WebSocket.OPEN) {
-                client.send(JSON.stringify({
-                    type: 'move',
-                    move: message.move,
-                    result: message.result || null, 
-                    winner: message.winner
-                }));
-                }
-            });
-            
-        }
-        if(message.type==='request'){
-            const clients = rooms.get(message.roomid);
-            clients.forEach((client)=>{
-                if(client!==socket && client.readyState===WebSocket.OPEN){
-                    client.send(JSON.stringify({
-                        type: 'response',
-                        msg: `${message.msg}. Would you like to accept it`
-                    }))
-                }
-            })
-        }
+    switch (type) {
+      case 'move':
+        broadcastToOthers({
+          type: 'move',
+          move: message.move,
+          result: message.result || null,
+          winner: message.winner || null,
+        });
+        break;
 
-        if(message.type==='acceptance'){
-            const clients = rooms.get(message.roomid);
-            clients.forEach((client)=>{
-                if(client!==socket && client.readyState===WebSocket.OPEN){
-                    client.send(JSON.stringify({
-                        type: 'acceptance',
-                        msg: 'Accepted request to draw',
-                    }))
+      case 'request':
+        broadcastToOthers({
+          type: 'response',
+          msg: `${message.msg}. Would you like to accept it?`,
+        });
+        break;
 
-                }
-            })
-        }
-        if(message.type==='rejection'){
-            const clients = rooms.get(message.roomid);
-            clients.forEach((client)=>{
-                if(client!==socket && client.readyState===WebSocket.OPEN){
-                    client.send(JSON.stringify({
-                        type: 'rejection',
-                        msg: `${socket.name} has rejected your request`,
-                    }))
-                }
-            })
-        }
-        if(message.type==='resign'){
-            const clients = rooms.get(message.roomid);
-            clients.forEach((client)=>{
-                if(client!==socket){
-                    client.send(JSON.stringify({
-                        type: 'resign',
-                        msg: message.msg,
-                    }))
-                }
-            })
-        }
+      case 'acceptance':
+        broadcastToOthers({
+          type: 'acceptance',
+          msg: 'Accepted request to draw',
+        });
+        break;
 
-    })
-    
-})
+      case 'rejection':
+        broadcastToOthers({
+          type: 'rejection',
+          msg: `${socket.name} has rejected your request`,
+        });
+        break;
 
-myserver.listen(port, ()=>{
-    console.log('server has been started');
+      case 'resign':
+        broadcastToOthers({
+          type: 'resign',
+          msg: message.msg || `${socket.name} resigned`,
+        });
+        break;
 
-})
+      default:
+        send(socket, {
+          type: 'error',
+          msg: `Unknown message type: ${type}`,
+        });
+    }
+  });
+
+  socket.on('close', () => {
+    console.log(`${socket.name || 'Unknown player'} disconnected`);
+    removeClient(socket);
+  });
+
+  socket.on('error', error => {
+    console.error('WebSocket error:', error.message);
+  });
+});
+
+server.listen(port, () => {
+  console.log(`Server running on http://localhost:${port}`);
+  console.log(`WebSocket available at ws://localhost:${port}`);
+});

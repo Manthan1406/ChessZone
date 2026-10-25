@@ -1,3 +1,4 @@
+/*
 import React from 'react'
 import {useState, useEffect} from 'react';
 import {Link} from 'react-router-dom';
@@ -301,3 +302,416 @@ function Game() {
 export default Game
 
 ;
+*/
+
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { Chess } from 'chess.js';
+import { Chessboard } from 'react-chessboard';
+
+const WS_URL = 'ws://localhost:3000';
+
+function Game() {
+  const [searchParams] = useSearchParams();
+  const socketRef = useRef(null);
+
+  const [iserror, setiserror] = useState(false);
+  const [errormessage, seterrormessage] = useState('');
+  const [connected, setConnected] = useState(false);
+  const [game, setgame] = useState(null);
+  const [fen, setFen] = useState(new Chess().fen());
+  const [orientation, setorientation] = useState('white');
+  const [opponent, setopponent] = useState('');
+
+  const name = searchParams.get('name') || 'Player';
+  const roomid = searchParams.get('id');
+
+  const [iswon, setiswon] = useState(false);
+  const [isdraw, setisdraw] = useState(false);
+  const [isStalemate, setisstalemate] = useState(false);
+  const [winner, setwinner] = useState('');
+
+  const [isdrawnotification, setisdrawnotification] = useState(false);
+  const [drawmessage, setdrawmessage] = useState('');
+  const [drawrequest, setdrawrequest] = useState(false);
+  const [rejectmessage, setrejectmessage] = useState('');
+
+  const [isresign, setisresign] = useState(false);
+  const [wonbyresign, setwonbyresign] = useState('');
+
+  const sendMessage = useCallback((message) => {
+    const socket = socketRef.current;
+
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+      setiserror(true);
+      seterrormessage('Not connected to the game server. Please refresh.');
+      return false;
+    }
+
+    socket.send(JSON.stringify({
+      ...message,
+      roomid,
+    }));
+
+    return true;
+  }, [roomid]);
+
+  useEffect(() => {
+    if (!roomid) {
+      setiserror(true);
+      seterrormessage('Missing room ID. Please return to the home page.');
+      return;
+    }
+
+    let active = true;
+    const socket = new WebSocket(WS_URL);
+    socketRef.current = socket;
+
+    socket.onopen = () => {
+      if (!active) return;
+
+      setConnected(true);
+      setiserror(false);
+
+      socket.send(JSON.stringify({
+        type: 'join-room',
+        name,
+        roomid,
+      }));
+    };
+
+    socket.onmessage = (event) => {
+      if (!active) return;
+
+      let message;
+
+      try {
+        message = JSON.parse(event.data);
+      } catch {
+        console.error('Invalid server message:', event.data);
+        return;
+      }
+
+      switch (message.type) {
+        case 'error':
+          setiserror(true);
+          seterrormessage(message.msg || 'Server error');
+          break;
+
+        case 'opponent': {
+          const opponents = Array.isArray(message.opponent)
+            ? message.opponent
+            : [];
+
+          setopponent(opponents[0] || '');
+          break;
+        }
+
+        case 'move': {
+          setgame((currentGame) => {
+            const nextGame = currentGame
+              ? new Chess(currentGame.fen())
+              : new Chess();
+
+            try {
+              nextGame.move(message.move);
+              setFen(nextGame.fen());
+            } catch (error) {
+              console.error('Could not apply opponent move:', error);
+              return currentGame;
+            }
+
+            return nextGame;
+          });
+
+          if (message.result === 'won') {
+            setwinner(message.winner || 'Opponent');
+            setiswon(true);
+          } else if (message.result === 'draw') {
+            setisdraw(true);
+          } else if (message.result === 'stalemate') {
+            setisstalemate(true);
+          }
+          break;
+        }
+
+        case 'response':
+          setisdrawnotification(true);
+          setdrawmessage(message.msg || 'Your opponent requests a draw.');
+          break;
+
+        case 'acceptance':
+          setisdraw(true);
+          setgame(null);
+          break;
+
+        case 'rejection':
+          setdrawrequest(false);
+          setisdraw(false);
+          setrejectmessage(message.msg || 'Draw request rejected.');
+          break;
+
+        case 'resign':
+          setgame(null);
+          setiswon(true);
+          setwinner(name);
+          setwonbyresign(message.msg || 'Your opponent resigned.');
+          break;
+
+        default:
+          console.log('Unhandled server message:', message);
+      }
+    };
+
+    socket.onerror = () => {
+      if (!active) return;
+      setiserror(true);
+      seterrormessage('Cannot connect to the game server on port 4000.');
+    };
+
+    socket.onclose = () => {
+      if (!active) return;
+      setConnected(false);
+      setopponent('');
+    };
+
+    return () => {
+      active = false;
+      socket.close();
+
+      if (socketRef.current === socket) {
+        socketRef.current = null;
+      }
+    };
+  }, [name, roomid]);
+
+  const handleSideSelect = (side) => {
+    const chess = new Chess();
+
+    setgame(chess);
+    setFen(chess.fen());
+    setorientation(side);
+
+    setisdraw(false);
+    setisdrawnotification(false);
+    setdrawrequest(false);
+    setiswon(false);
+    setisstalemate(false);
+    setisresign(false);
+    setwinner('');
+    setwonbyresign('');
+    setrejectmessage('');
+  };
+
+  const handlemove = (from, to) => {
+    if (!game || !opponent || !connected || iswon || isdraw || isStalemate) {
+      return false;
+    }
+
+    const chess = new Chess(game.fen());
+    let move;
+
+    try {
+      move = chess.move({
+        from,
+        to,
+        promotion: 'q',
+      });
+    } catch {
+      return false;
+    }
+
+    if (!move) return false;
+
+    let result = null;
+
+    if (chess.isCheckmate()) {
+      result = 'won';
+    } else if (chess.isStalemate()) {
+      result = 'stalemate';
+    } else if (chess.isDraw()) {
+      result = 'draw';
+    }
+
+    setgame(chess);
+    setFen(chess.fen());
+
+    if (result === 'won') {
+      setiswon(true);
+      setwinner(name);
+    } else if (result === 'draw') {
+      setisdraw(true);
+    } else if (result === 'stalemate') {
+      setisstalemate(true);
+    }
+
+    sendMessage({
+      type: 'move',
+      move: {
+        from: move.from,
+        to: move.to,
+        promotion: move.promotion,
+      },
+      result,
+      winner: name,
+    });
+
+    return true;
+  };
+
+  const handledraw = () => {
+    if (!opponent || !connected) return;
+
+    if (sendMessage({
+      type: 'request',
+      msg: `${name} requests a draw`,
+    })) {
+      setdrawrequest(true);
+      setrejectmessage('');
+    }
+  };
+
+  const acceptdraw = () => {
+    if (sendMessage({ type: 'acceptance' })) {
+      setisdraw(true);
+      setisdrawnotification(false);
+      setgame(null);
+    }
+  };
+
+  const rejectdraw = () => {
+    if (sendMessage({ type: 'rejection' })) {
+      setisdrawnotification(false);
+      setisdraw(false);
+    }
+  };
+
+  const handleresign = () => {
+    if (!opponent || !connected) return;
+
+    if (sendMessage({
+      type: 'resign',
+      msg: `${name} has resigned. You have won!`,
+    })) {
+      setisresign(true);
+      setgame(null);
+    }
+  };
+
+  return (
+    <div className="bg-white min-h-screen flex flex-col items-center justify-center p-4">
+      {!connected && !iserror && (
+        <p className="mb-3 text-gray-600">Connecting to game server...</p>
+      )}
+
+      {iserror && (
+        <div className="bg-white shadow-md p-5 rounded text-center mb-4">
+          <h1 className="text-red-700 font-semibold text-xl">
+            {errormessage}
+          </h1>
+        </div>
+      )}
+
+      {!game && !iserror && !iswon && !isdraw && !isresign && !isStalemate && (
+        <>
+          <h2 className="text-xl font-semibold mb-4">Choose your side</h2>
+          <button
+            onClick={() => handleSideSelect('white')}
+            className="bg-green-600 text-white px-5 py-2 rounded-md mb-3"
+          >
+            White
+          </button>
+          <button
+            onClick={() => handleSideSelect('black')}
+            className="bg-green-600 text-white px-5 py-2 rounded-md"
+          >
+            Black
+          </button>
+        </>
+      )}
+
+      {game && !iserror && (
+        <div className="flex flex-col items-center">
+          {isdrawnotification && (
+            <div className="bg-gray-100 p-4 rounded mb-4 flex flex-wrap items-center gap-3">
+              <p>{drawmessage}</p>
+              <button
+                onClick={acceptdraw}
+                className="bg-green-600 text-white rounded px-4 py-2"
+              >
+                Accept
+              </button>
+              <button
+                onClick={rejectdraw}
+                className="bg-red-600 text-white rounded px-4 py-2"
+              >
+                Reject
+              </button>
+            </div>
+          )}
+
+          <p className="mb-4 text-gray-800">
+            {opponent
+              ? `Opponent: ${opponent}`
+              : 'Waiting for opponent to join the room...'}
+          </p>
+
+          <Chessboard
+            position={fen}
+            onPieceDrop={handlemove}
+            boardWidth={400}
+            boardOrientation={orientation}
+            isDraggablePiece={({ piece }) => {
+              if (!game || !opponent || !connected || iswon || isdraw || isStalemate) {
+                return false;
+              }
+
+              const playerColor = orientation === 'white' ? 'w' : 'b';
+
+              return (
+                game.turn() === playerColor &&
+                piece.startsWith(playerColor)
+              );
+            }}
+          />
+
+          <p className="mt-3">{name}</p>
+          <p className="text-red-600 mt-2">{rejectmessage}</p>
+
+          <div className="flex gap-2 mt-3">
+            <button
+              onClick={handledraw}
+              disabled={!opponent || !connected || drawrequest}
+              className="bg-green-600 text-white px-5 py-2 rounded-md disabled:opacity-50"
+            >
+              {drawrequest ? 'Sent...' : 'Draw'}
+            </button>
+
+            <button
+              onClick={handleresign}
+              disabled={!opponent || !connected}
+              className="bg-red-600 text-white px-5 py-2 rounded-md disabled:opacity-50"
+            >
+              Resign
+            </button>
+          </div>
+        </div>
+      )}
+
+      {iswon && (
+        <div className="text-center">
+          <p>{wonbyresign}</p>
+          <p className="text-xl font-semibold">{winner} has won the game.</p>
+        </div>
+      )}
+
+      {isdraw && <p className="text-xl">Draw between both players.</p>}
+
+      {isStalemate && <p className="text-xl">Stalemate!</p>}
+
+      {isresign && <p>You have resigned from the game.</p>}
+    </div>
+  );
+}
+
+export default Game;
