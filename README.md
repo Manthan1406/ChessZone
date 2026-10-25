@@ -1,65 +1,146 @@
-# WebSockets Chess Game
+# ♟️ ChessZone — Real-Time Multiplayer Chess
 
-A real-time multiplayer chess game built with React (frontend), Express.js (backend), WebSockets. The app allows users to join a room and play chess against each other with live move synchronization.
+ChessZone is a real-time multiplayer chess application built with React, Node.js, Express.js, and WebSockets. Players can create or join a room, choose their side, and play chess against another player with live move synchronization.
 
-## Features
-- Real-time chess gameplay between two users
-- Room-based matchmaking (join by room ID)
-- Live move updates using WebSockets
-- Modern React frontend styled with Tailwind CSS
-- Chess logic powered by [chess.js](https://github.com/jhlywa/chess.js)
+## ✨ Features
 
-## Project Structure
-```
-WEBRTC/
-├── backend/         # Express.js WebSocket server
+- ♟️ **Real-Time Multiplayer:** Play chess with another player over WebSockets.
+- 🏠 **Room-Based Gameplay:** Join a game using a shared room ID.
+- ♔ **Choose Your Side:** Play as White or Black.
+- 🔄 **Live Move Synchronization:** Moves are communicated between connected players.
+- 🤝 **Draw Requests:** Offer, accept, or reject a draw.
+- 🏳️ **Resignation:** Resign from an ongoing game.
+- ⚖️ **Chess Rules:** Chess logic is handled using [chess.js](https://github.com/jhlywa/chess.js).
+- 🎨 **Modern Interface:** Dark-themed interface with green accents, built with React and Tailwind CSS.
+- ☁️ **Online Deployment:** Frontend hosted on Vercel and backend hosted on Render.
+
+## 🛠️ Tech Stack
+
+| Component | Technology |
+|---|---|
+| Frontend | React, Vite |
+| Styling | Tailwind CSS |
+| Chessboard | react-chessboard |
+| Chess Logic | chess.js |
+| Backend | Node.js, Express.js |
+| Real-Time Communication | WebSockets (`ws`) |
+| Frontend Hosting | Vercel |
+| Backend Hosting | Render |
+
+## 📁 Project Structure
+
+```text
+ChessZone/
+├── backend/
 │   ├── index.js
-│   └── package.json
-├── frontend/        # React + Vite client
+│   ├── package.json
+│   └── package-lock.json
+├── frontend/
+│   ├── public/
 │   ├── src/
+│   │   ├── pages/
+│   │   │   ├── Home.jsx
+│   │   │   └── Game.jsx
 │   │   ├── App.jsx
 │   │   ├── main.jsx
-│   │   ├── index.css
-│   │   └── pages/
-│   │       ├── Home.jsx
-│   │       └── Game.jsx
-│   ├── public/
+│   │   └── index.css
 │   ├── index.html
-│   └── package.json
+│   ├── package.json
+│   ├── vite.config.js
+│   └── vercel.json
 └── README.md
 ```
 
-## Getting Started
+## 🚀 Getting Started
 
 ### Prerequisites
-- Node.js (v18+ recommended)
+
+Install the following before running the project locally:
+
+- [Node.js](https://nodejs.org/) (version 18 or later recommended)
 - npm
+- Git
 
-### Backend Setup
-1. Open a terminal and navigate to the `backend` folder:
-   ```sh
-   cd backend
-   npm install
-   touch .env
-   npm start
-   ```
-   The backend server will start on the port specified in your `.env` file (e.g., 8000). Here i have used the port 4000 for the backend websocketserver
+### 1. Clone the Repository
 
-### Frontend Setup
-1. Open a new terminal and navigate to the `frontend` folder:
-   ```sh
-   cd frontend
-   npm install
-   npm run dev
-   ```
-   The React app will start (default: http://localhost:5173).
+```bash
+git clone https://github.com/Manthan1406/ChessZone.git
+cd ChessZone
+```
 
-## Usage
-1. Open the frontend in your browser.
+### 2. Set Up the Backend
+
+Open a terminal in the project directory and run:
+
+```bash
+cd backend
+npm install
+```
+
+Start the backend server:
+
+```bash
+node index.js
+```
+
+The backend uses the port configured in the server code, typically port `3000` locally. When deployed on Render, it uses the port provided by the hosting environment.
+
+Keep the backend terminal running.
+
+### 3. Set Up the Frontend
+
+Open a second terminal from the project root:
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+## 🌐 Live Deployment
+
+ChessZone is deployed online and can be accessed through the following services:
+
+- **Live Website:** https://chess-zone-weld.vercel.app/
+- **Frontend Hosting:** Vercel
+- **Backend Hosting:** Render
+- **Real-Time Communication:** WebSockets over a secure connection (`wss://`)
+
+The frontend communicates with the deployed backend through the `VITE_WS_URL` environment variable configured in Vercel.
+
+### Local Development
+
+To run ChessZone locally, start the backend and frontend separately using the instructions in the Getting Started section.
+
+## 🎮 How to Play
+
+1. Open ChessZone in your browser.
 2. Enter your name and a room ID on the home page.
-3. Share the room ID with your opponent and both join the same room.
-4. Play chess in real time!
+3. Join the game and choose White or Black.
+4. Share the same room ID with your opponent.
+5. Wait for your opponent to connect.
+6. Take turns moving pieces on the chessboard.
+7. Use the game controls to offer a draw or resign when needed.
 
-## Tech Stack
-- **Frontend:** React, Vite, Tailwind CSS, react-chessboard, chess.js
-- **Backend:** Express.js, ws (WebSockets), chess.js
+Both players must connect to the same room to play together.
+
+
+## 📌 Future Improvements
+
+- Restore the current game position when a player reconnects.
+- Persist game sessions and move history.
+- Add player authentication and profiles.
+- Add a chess clock and move timer.
+- Improve matchmaking and room management.
+- Add a game history and rematch feature.
+- Improve error handling and reconnection behavior.
+
+## 👨‍💻 Author
+
+**Manthan**
+
+GitHub: [Manthan1406](https://github.com/Manthan1406)
+
+## 📄 License
+
+This project is intended for educational and learning purposes. Add a license file if you plan to distribute it under a specific open-source license.
