@@ -5,7 +5,7 @@ import { useSearchParams, Link } from 'react-router-dom';
 import { Chess } from 'chess.js';
 import { Chessboard } from 'react-chessboard';
 
-const WS_URL = 'ws://localhost:3000';
+const WS_URL = "https://chesszone.onrender.com";
 
 function Game() {
   const [searchParams] = useSearchParams();
