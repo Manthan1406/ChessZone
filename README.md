@@ -135,12 +135,4 @@ Both players must connect to the same room to play together.
 - Add a game history and rematch feature.
 - Improve error handling and reconnection behavior.
 
-## 👨‍💻 Author
 
-**Manthan**
-
-GitHub: [Manthan1406](https://github.com/Manthan1406)
-
-## 📄 License
-
-This project is intended for educational and learning purposes. Add a license file if you plan to distribute it under a specific open-source license.
