@@ -1,1 +1,251 @@
+
 @import "tailwindcss";
+
+:root {
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system,
+    BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color: #e5e7eb;
+  background: #0b0f0e;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+
+  --bg: #0b0f0e;
+  --panel: #121916;
+  --panel-raised: #18221d;
+  --border: #29372f;
+  --green: #22c55e;
+  --green-hover: #16a34a;
+  --text: #e5e7eb;
+  --muted: #9ca3af;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  min-width: 320px;
+  min-height: 100%;
+  background: var(--bg);
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  background:
+    radial-gradient(ellipse at 50% -20%, #183324 0%, transparent 55%),
+    var(--bg);
+  color: var(--text);
+}
+
+body,
+button,
+input,
+textarea,
+select {
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+}
+
+button {
+  cursor: pointer;
+  transition:
+    background-color 160ms ease,
+    border-color 160ms ease,
+    color 160ms ease,
+    transform 160ms ease;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible {
+  outline: 2px solid var(--green);
+  outline-offset: 3px;
+}
+
+a {
+  color: #86efac;
+  text-decoration: none;
+}
+
+a:hover {
+  color: #bbf7d0;
+}
+
+::selection {
+  color: #052e16;
+  background: #86efac;
+}
+
+/* Main page containers and reusable panels */
+.container,
+.page-container,
+.home-container,
+.game-container,
+.app-container,
+main {
+  width: 100%;
+  max-width: 1200px;
+  margin-inline: auto;
+}
+
+.panel,
+.card,
+.game-panel,
+.home-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  box-shadow: 0 12px 32px rgb(0 0 0 / 18%);
+}
+
+/* Common headings */
+h1,
+h2,
+h3 {
+  color: #f9fafb;
+  letter-spacing: -0.035em;
+}
+
+h1 {
+  font-weight: 800;
+}
+
+p {
+  line-height: 1.7;
+}
+
+/* Green primary buttons */
+.btn-primary,
+.primary-btn,
+button.primary {
+  color: #052e16;
+  background: var(--green);
+  border: 1px solid var(--green);
+  border-radius: 10px;
+  padding: 10px 18px;
+  font-weight: 700;
+}
+
+.btn-primary:hover,
+.primary-btn:hover,
+button.primary:hover {
+  background: var(--green-hover);
+  border-color: var(--green-hover);
+  transform: translateY(-1px);
+}
+
+/* Generic secondary buttons */
+.btn-secondary,
+.secondary-btn {
+  color: var(--text);
+  background: var(--panel-raised);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 18px;
+  font-weight: 600;
+}
+
+.btn-secondary:hover,
+.secondary-btn:hover {
+  background: #223329;
+  border-color: #3d5946;
+}
+
+/* Inputs */
+input,
+textarea,
+select {
+  color: var(--text);
+  background: #0d1410;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 11px 13px;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: #6b7c70;
+}
+
+/* Chess board wrapper, if your JSX uses these classes */
+.chessboard-container,
+.board-container {
+  width: 100%;
+  max-width: 640px;
+  margin-inline: auto;
+  overflow: hidden;
+  border: 3px solid #263a2c;
+  border-radius: 8px;
+  box-shadow: 0 18px 50px rgb(0 0 0 / 40%);
+}
+
+/* Game information */
+.game-info,
+.game-sidebar {
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 18px;
+}
+
+/* Scrollbars */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #35533e #101612;
+}
+
+::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+
+::-webkit-scrollbar-track {
+  background: #101612;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #35533e;
+  border-radius: 8px;
+}
+
+@media (max-width: 640px) {
+  .container,
+  .page-container,
+  .home-container,
+  .game-container,
+  .app-container,
+  main {
+    padding-inline: 12px;
+  }
+
+  .panel,
+  .card,
+  .game-panel,
+  .home-card {
+    border-radius: 12px;
+  }
+
+  h1 {
+    font-size: clamp(1.8rem, 8vw, 2.7rem);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
+}
