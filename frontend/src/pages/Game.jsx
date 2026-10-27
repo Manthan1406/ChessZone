@@ -1,716 +1,503 @@
 
-
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { useSearchParams, Link } from 'react-router-dom';
+import { useSearchParams, useNavigate, Link } from 'react-router-dom';
 import { Chess } from 'chess.js';
 import { Chessboard } from 'react-chessboard';
+import { WS_URL, getToken, getUser, clearSession } from '../auth.js';
 
+const initialFen = new Chess().fen();
+const FATAL_ERROR = /session|log in|login|ended|reserved|two connected|account not found/i;
 
-const WS_URL =
-  import.meta.env.VITE_WS_URL || "ws://localhost:3000";
+export default function Game() {
+  const [params] = useSearchParams();
+  const navigate = useNavigate();
+  const roomid = params.get('id');
+  const user = getUser();
+  const name = user?.displayName || user?.username || 'You';
 
-
-function Game() {
-  const [searchParams] = useSearchParams();
   const socketRef = useRef(null);
+  const gameRef = useRef(new Chess());
 
-  const [iserror, setiserror] = useState(false);
-  const [errormessage, seterrormessage] = useState('');
   const [connected, setConnected] = useState(false);
-  const [game, setgame] = useState(null);
-  const [fen, setFen] = useState(new Chess().fen());
-  const [orientation, setorientation] = useState('white');
-  const [opponent, setopponent] = useState('');
+  const [role, setRole] = useState(null);
+  const [color, setColor] = useState(null);
+  const [fen, setFen] = useState(initialFen);
+  const [status, setStatus] = useState('waiting');
+  const [opponent, setOpponent] = useState('');
+  const [error, setError] = useState('');
+  const [result, setResult] = useState(null);
+  const [drawOffer, setDrawOffer] = useState('');
+  const [drawRequested, setDrawRequested] = useState(false);
+  const [notice, setNotice] = useState('');
+  const [selectedSquare, setSelectedSquare] = useState(null);
+  const [boardWidth, setBoardWidth] = useState(560);
 
-  const name = searchParams.get('name') || 'Player';
-  const roomid = searchParams.get('id');
+  const orientation = color === 'black' ? 'black' : 'white';
 
-  const [iswon, setiswon] = useState(false);
-  const [isdraw, setisdraw] = useState(false);
-  const [isStalemate, setisstalemate] = useState(false);
-  const [winner, setwinner] = useState('');
+  // Keep the board inside the screen on phones.
+  useEffect(() => {
+    const update = () => setBoardWidth(Math.max(280, Math.min(560, window.innerWidth - 80)));
+    update();
+    window.addEventListener('resize', update);
+    return () => window.removeEventListener('resize', update);
+  }, []);
 
-  const [isdrawnotification, setisdrawnotification] = useState(false);
-  const [drawmessage, setdrawmessage] = useState('');
-  const [drawrequest, setdrawrequest] = useState(false);
-  const [rejectmessage, setrejectmessage] = useState('');
+  const send = useCallback((payload) => {
+    const ws = socketRef.current;
 
-  const [isresign, setisresign] = useState(false);
-  const [wonbyresign, setwonbyresign] = useState('');
-
-  const sendMessage = useCallback((message) => {
-    const socket = socketRef.current;
-
-    if (!socket || socket.readyState !== WebSocket.OPEN) {
-      setiserror(true);
-      seterrormessage(
-        'Not connected to the game server. Please refresh.'
-      );
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      setError('Not connected to the game server. Reconnecting…');
       return false;
     }
 
-    socket.send(JSON.stringify({
-      ...message,
-      roomid,
-    }));
-
+    ws.send(JSON.stringify({ ...payload, roomid }));
     return true;
   }, [roomid]);
 
+  // Connect, authenticate with the saved JWT, and reconnect if the link drops.
   useEffect(() => {
     if (!roomid) {
-      setiserror(true);
-      seterrormessage(
-        'Missing room ID. Please return to the home page.'
-      );
-      return;
+      setError('Missing room ID. Please return to the home page.');
+      return undefined;
     }
 
     let active = true;
-    const socket = new WebSocket(WS_URL);
-    socketRef.current = socket;
+    let stopRetrying = false;
+    let retryTimer = null;
+    let attempts = 0;
 
-    socket.onopen = () => {
-      if (!active) return;
-
-      setConnected(true);
-      setiserror(false);
-
-      socket.send(JSON.stringify({
-        type: 'join-room',
-        name,
-        roomid,
-      }));
-    };
-
-    socket.onmessage = (event) => {
-      if (!active) return;
-
-      let message;
-
-      try {
-        message = JSON.parse(event.data);
-      } catch {
-        console.error('Invalid server message:', event.data);
+    const connect = () => {
+      const token = getToken();
+      if (!token) {
+        navigate('/login', { replace: true });
         return;
       }
 
-      switch (message.type) {
-        case 'error':
-          setiserror(true);
-          seterrormessage(message.msg || 'Server error');
-          break;
+      const ws = new WebSocket(WS_URL);
+      socketRef.current = ws;
 
-        case 'opponent': {
-          const opponents = Array.isArray(message.opponent)
-            ? message.opponent
-            : [];
+      ws.onopen = () => {
+        if (!active) return;
+        attempts = 0;
+        setConnected(true);
+        setError('');
+        ws.send(JSON.stringify({ type: 'join-room', roomid, token }));
+      };
 
-          setopponent(opponents[0] || '');
-          break;
+      ws.onmessage = (event) => {
+        if (!active) return;
+
+        let message;
+        try {
+          message = JSON.parse(event.data);
+        } catch {
+          return;
         }
 
-        case 'move': {
-          setgame((currentGame) => {
-            const nextGame = currentGame
-              ? new Chess(currentGame.fen())
-              : new Chess();
+        switch (message.type) {
+          case 'error': {
+            const text = message.msg || 'Server error';
 
-            try {
-              nextGame.move(message.move);
-              setFen(nextGame.fen());
-            } catch (error) {
-              console.error(
-                'Could not apply opponent move:',
-                error
-              );
-              return currentGame;
+            if (/session|log in|login|account not found/i.test(text)) {
+              stopRetrying = true;
+              clearSession();
+              navigate('/login', { replace: true });
+              return;
             }
 
-            return nextGame;
-          });
-
-          if (message.result === 'won') {
-            setwinner(message.winner || 'Opponent');
-            setiswon(true);
-          } else if (message.result === 'draw') {
-            setisdraw(true);
-          } else if (message.result === 'stalemate') {
-            setisstalemate(true);
+            if (FATAL_ERROR.test(text)) stopRetrying = true;
+            setError(text);
+            break;
           }
-          break;
+
+          case 'opponent': {
+            const names = Array.isArray(message.opponent) ? message.opponent : [];
+            setOpponent(names[0] || '');
+            break;
+          }
+
+          case 'side-assigned':
+            setRole(message.role || null);
+            setColor(message.color || null);
+            break;
+
+          case 'game-state': {
+            try {
+              const nextGame = new Chess(message.fen || initialFen);
+              gameRef.current = nextGame;
+              setFen(nextGame.fen());
+            } catch {
+              setError('Invalid board position received from server.');
+            }
+            if (message.status) setStatus(message.status);
+            break;
+          }
+
+          case 'move': {
+            try {
+              const nextGame = new Chess(message.fen || initialFen);
+              gameRef.current = nextGame;
+              setFen(nextGame.fen());
+              setSelectedSquare(null);
+              setDrawOffer('');
+              setDrawRequested(false);
+              setNotice('');
+            } catch {
+              setError('Invalid move position received from server.');
+            }
+            break;
+          }
+
+          case 'response':
+            setDrawOffer(message.msg || 'Your opponent offers a draw.');
+            setDrawRequested(false);
+            setNotice('');
+            break;
+
+          case 'rejection':
+            setDrawRequested(false);
+            setDrawOffer('');
+            setNotice(message.msg || 'Draw offer declined.');
+            break;
+
+          case 'game-over':
+            stopRetrying = true;
+            setResult({
+              result: message.result,
+              reason: message.reason || 'Game finished',
+              winner: message.winner,
+            });
+            setStatus('completed');
+            setDrawOffer('');
+            setDrawRequested(false);
+            setSelectedSquare(null);
+            break;
+
+          default:
+            break;
         }
+      };
 
-        case 'response':
-          setisdrawnotification(true);
-          setdrawmessage(
-            message.msg || 'Your opponent requests a draw.'
-          );
-          break;
+      ws.onerror = () => {
+        if (active) setError('Cannot reach the game server. Retrying…');
+      };
 
-        case 'acceptance':
-          setisdraw(true);
-          setgame(null);
-          break;
+      ws.onclose = () => {
+        if (!active) return;
+        setConnected(false);
+        setOpponent('');
 
-        case 'rejection':
-          setdrawrequest(false);
-          setisdraw(false);
-          setrejectmessage(
-            message.msg || 'Draw request rejected.'
-          );
-          break;
-
-        case 'resign':
-          setgame(null);
-          setiswon(true);
-          setwinner(name);
-          setwonbyresign(
-            message.msg || 'Your opponent resigned.'
-          );
-          break;
-
-        default:
-          console.log('Unhandled server message:', message);
-      }
+        if (!stopRetrying) {
+          const delay = Math.min(1000 * 2 ** attempts, 10000);
+          attempts += 1;
+          retryTimer = setTimeout(connect, delay);
+        }
+      };
     };
 
-    socket.onerror = () => {
-      if (!active) return;
-
-      setiserror(true);
-      seterrormessage(
-        'Cannot connect to the game server on port 3000.'
-      );
-    };
-
-    socket.onclose = () => {
-      if (!active) return;
-
-      setConnected(false);
-      setopponent('');
-    };
+    connect();
 
     return () => {
       active = false;
-      socket.close();
-
-      if (socketRef.current === socket) {
-        socketRef.current = null;
-      }
+      clearTimeout(retryTimer);
+      const ws = socketRef.current;
+      socketRef.current = null;
+      if (ws) ws.close();
     };
-  }, [name, roomid]);
+  }, [roomid, navigate]);
 
-  const handleSideSelect = (side) => {
-    const chess = new Chess();
-
-    setgame(chess);
-    setFen(chess.fen());
-    setorientation(side);
-
-    setisdraw(false);
-    setisdrawnotification(false);
-    setdrawrequest(false);
-    setiswon(false);
-    setisstalemate(false);
-    setisresign(false);
-    setwinner('');
-    setwonbyresign('');
-    setrejectmessage('');
+  const chooseSide = (side) => {
+    if (send({ type: 'choose-side', color: side })) setError('');
   };
 
-  const handlemove = (from, to) => {
-    if (
-      !game ||
-      !opponent ||
-      !connected ||
-      iswon ||
-      isdraw ||
-      isStalemate
-    ) {
-      return false;
-    }
+  const canPlay =
+    connected && Boolean(opponent) && Boolean(color) && status === 'active' && !result;
 
-    const chess = new Chess(game.fen());
+  // Validates a move locally, then asks the server to apply it.
+  const trySendMove = (from, to) => {
+    if (!canPlay) return false;
+
+    const playerColor = color === 'white' ? 'w' : 'b';
+    const currentGame = gameRef.current;
+    if (currentGame.turn() !== playerColor) return false;
+
+    const testGame = new Chess(currentGame.fen());
     let move;
-
     try {
-      move = chess.move({
-        from,
-        to,
-        promotion: 'q',
-      });
+      move = testGame.move({ from, to, promotion: 'q' });
     } catch {
       return false;
     }
-
     if (!move) return false;
 
-    let result = null;
-
-    if (chess.isCheckmate()) {
-      result = 'won';
-    } else if (chess.isStalemate()) {
-      result = 'stalemate';
-    } else if (chess.isDraw()) {
-      result = 'draw';
-    }
-
-    setgame(chess);
-    setFen(chess.fen());
-
-    if (result === 'won') {
-      setiswon(true);
-      setwinner(name);
-    } else if (result === 'draw') {
-      setisdraw(true);
-    } else if (result === 'stalemate') {
-      setisstalemate(true);
-    }
-
-    sendMessage({
+    const sent = send({
       type: 'move',
-      move: {
-        from: move.from,
-        to: move.to,
-        promotion: move.promotion,
-      },
-      result,
-      winner: name,
+      move: { from: move.from, to: move.to, promotion: move.promotion || 'q' },
     });
 
-    return true;
+    if (sent) setSelectedSquare(null);
+    return sent;
   };
 
-  const handledraw = () => {
-    if (!opponent || !connected) return;
+  const handleMove = (from, to) => trySendMove(from, to);
 
-    if (sendMessage({
-      type: 'request',
-      msg: `${name} requests a draw`,
-    })) {
-      setdrawrequest(true);
-      setrejectmessage('');
+  // Tap-to-move for phones and desktops.
+  const handleSquareClick = (square) => {
+    if (!canPlay) return;
+
+    const playerColor = color === 'white' ? 'w' : 'b';
+    const currentGame = gameRef.current;
+    if (currentGame.turn() !== playerColor) return;
+
+    const piece = currentGame.get(square);
+
+    if (!selectedSquare) {
+      if (piece && piece.color === playerColor) setSelectedSquare(square);
+      return;
     }
-  };
 
-  const acceptdraw = () => {
-    if (sendMessage({ type: 'acceptance' })) {
-      setisdraw(true);
-      setisdrawnotification(false);
-      setgame(null);
+    if (selectedSquare === square) {
+      setSelectedSquare(null);
+      return;
     }
-  };
 
-  const rejectdraw = () => {
-    if (sendMessage({ type: 'rejection' })) {
-      setisdrawnotification(false);
-      setisdraw(false);
+    if (piece && piece.color === playerColor) {
+      setSelectedSquare(square);
+      return;
     }
+
+    trySendMove(selectedSquare, square);
   };
 
-  const handleresign = () => {
-    if (!opponent || !connected) return;
+  // Highlight the selected piece and where it can go.
+  const legalMoveHighlights = {};
 
-    if (sendMessage({
-      type: 'resign',
-      msg: `${name} has resigned. You have won!`,
-    })) {
-      setisresign(true);
-      setgame(null);
+  if (selectedSquare && canPlay) {
+    const currentGame = gameRef.current;
+    const playerColor = color === 'white' ? 'w' : 'b';
+
+    if (currentGame.turn() === playerColor) {
+      legalMoveHighlights[selectedSquare] = { background: 'rgba(250, 204, 21, 0.55)' };
+
+      try {
+        currentGame.moves({ square: selectedSquare, verbose: true }).forEach((move) => {
+          legalMoveHighlights[move.to] = {
+            background: currentGame.get(move.to)
+              ? 'radial-gradient(circle, rgba(34,197,94,0.35) 85%, transparent 86%)'
+              : 'radial-gradient(circle, rgba(34,197,94,0.35) 22%, transparent 24%)',
+          };
+        });
+      } catch {
+        // Ignore stale selections.
+      }
     }
+  }
+
+  const yourTurn =
+    Boolean(color) && gameRef.current.turn() === (color === 'white' ? 'w' : 'b');
+
+  const button =
+    'rounded-xl px-5 py-3 font-bold transition disabled:cursor-not-allowed disabled:opacity-40';
+
+  const resultText = () => {
+    if (!result) return '';
+    if (result.result === 'draw') return 'Game drawn';
+    if (result.result === 'abandoned') return 'Game abandoned';
+    if (result.result === 'white_win') return 'White wins';
+    if (result.result === 'black_win') return 'Black wins';
+    return 'Game finished';
   };
-
-  const gameFinished =
-    iswon || isdraw || isStalemate || isresign;
-
-  const primaryButton =
-    'rounded-xl bg-green-500 px-5 py-3 font-bold text-black ' +
-    'transition hover:bg-green-400 active:scale-[0.98] ' +
-    'disabled:cursor-not-allowed disabled:opacity-40';
-
-  const secondaryButton =
-    'rounded-xl border border-[#35483b] bg-[#18221d] ' +
-    'px-5 py-3 font-semibold text-gray-200 transition ' +
-    'hover:border-green-700 hover:bg-[#223329]';
 
   return (
-    <div className="min-h-screen bg-[#0b0f0e] px-4 py-6 text-gray-100 sm:px-6 sm:py-8">
-      <div className="mx-auto flex w-full max-w-6xl flex-col gap-6">
+    <div className="min-h-screen bg-[#0b0f0e] px-4 py-8 text-gray-100">
+      <div className="mx-auto max-w-5xl space-y-6">
 
-        {/* Header */}
-        <header className="flex flex-wrap items-center justify-between gap-4 border-b border-[#29372f] pb-5">
-          <Link to="/" className="text-2xl font-extrabold tracking-tight text-white">
+        <header className="flex flex-wrap items-center justify-between gap-3 border-b border-[#29372f] pb-5">
+          <Link to="/home" className="text-2xl font-extrabold">
             ♞ Chess<span className="text-green-500">Zone</span>
           </Link>
 
-          <div className="flex items-center gap-2 rounded-full border border-[#29372f] bg-[#121916] px-4 py-2 text-sm">
-            <span
-              className={`h-2.5 w-2.5 rounded-full ${
-                connected ? 'bg-green-400' : 'bg-yellow-500'
-              }`}
-            />
-            <span className="text-gray-300">
-              {connected ? 'Connected' : 'Connecting...'}
-            </span>
-          </div>
+          <span className="text-sm">
+            {connected ? '🟢 Connected' : '🟡 Connecting…'}
+          </span>
         </header>
 
-        {/* Room information */}
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <p className="text-sm font-medium uppercase tracking-[0.18em] text-green-500">
-              Multiplayer Chess
-            </p>
-            <h1 className="mt-1 text-3xl font-extrabold text-white sm:text-4xl">
-              Game Arena
-            </h1>
+            <p className="text-sm uppercase text-green-500">Multiplayer Chess</p>
+            <h1 className="text-3xl font-extrabold">Game Arena</h1>
           </div>
 
-          <div className="rounded-xl border border-[#29372f] bg-[#121916] px-4 py-3">
-            <p className="text-xs uppercase tracking-wider text-gray-500">
-              Room ID
-            </p>
-            <p className="mt-1 font-bold text-green-400">
-              {roomid || 'Not specified'}
-            </p>
+          <div className="rounded-xl border border-[#29372f] p-3">
+            Room ID: <b className="text-green-400">{roomid || 'Not specified'}</b>
           </div>
         </div>
 
-        {/* Connection error */}
-        {iserror && (
-          <div className="rounded-2xl border border-red-900 bg-red-950/40 p-5">
-            <h2 className="text-lg font-bold text-red-400">
-              Connection problem
-            </h2>
-            <p className="mt-2 text-sm text-red-200">
-              {errormessage}
-            </p>
-            <Link
-              to="/"
-              className="mt-4 inline-block rounded-lg border border-red-800 px-4 py-2 text-sm font-semibold text-red-300 hover:bg-red-900/40"
-            >
-              Return Home
-            </Link>
+        {error && (
+          <div className="rounded-xl border border-red-700 bg-red-950/40 p-4 text-red-300">
+            {error}
+            {!roomid && (
+              <p className="mt-2">
+                <Link to="/home" className="underline">Back to home</Link>
+              </p>
+            )}
           </div>
         )}
 
-        {/* Waiting for server */}
-        {!connected && !iserror && (
-          <div className="rounded-2xl border border-[#29372f] bg-[#121916] p-5 text-center text-gray-400">
-            <p className="font-semibold text-white">
-              Connecting to ChessZone...
-            </p>
-            <p className="mt-1 text-sm">
-              Waiting for the game server.
-            </p>
-          </div>
-        )}
+        {connected && role === 'chooser' && !color && !result && (
+          <section className="mx-auto max-w-xl space-y-5 rounded-2xl border border-[#29372f] bg-[#121916] p-8 text-center">
+            <h2 className="text-3xl font-bold">Choose Your Side</h2>
 
-        {/* Choose side */}
-        {!game && !iserror && !iswon && !isdraw && !isresign && !isStalemate && (
-          <section className="mx-auto w-full max-w-xl rounded-2xl border border-[#29372f] bg-[#121916] p-6 text-center shadow-2xl shadow-green-950/20 sm:p-10">
-            <div className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-2xl border border-green-800 bg-green-950/50 text-4xl text-green-400">
-              ♟
-            </div>
-
-            <h2 className="text-3xl font-extrabold text-white">
-              Choose Your Side
-            </h2>
-
-            <p className="mt-3 text-sm leading-6 text-gray-400">
-              Welcome, {name}. Choose your pieces to get started.
+            <p className="text-gray-400">
+              You joined first. Your opponent will automatically get the opposite color.
             </p>
 
-            <div className="mt-8 grid gap-4 sm:grid-cols-2">
+            <div className="flex flex-wrap justify-center gap-3">
               <button
-                onClick={() => handleSideSelect('white')}
-                disabled={!connected}
-                className={primaryButton}
+                className={`${button} bg-green-500 text-black`}
+                onClick={() => chooseSide('white')}
               >
                 ♔ Play as White
               </button>
 
               <button
-                onClick={() => handleSideSelect('black')}
-                disabled={!connected}
-                className={secondaryButton}
+                className={`${button} border border-green-700`}
+                onClick={() => chooseSide('black')}
               >
                 ♚ Play as Black
               </button>
             </div>
-
-            <p className="mt-6 text-xs text-gray-500">
-              You can start moving when your opponent joins.
-            </p>
           </section>
         )}
 
-        {/* Active game */}
-        {game && !iserror && (
-          <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_300px]">
+        {connected && role === 'guest' && !color && !result && (
+          <div className="rounded-xl bg-[#121916] p-6 text-center">
+            Waiting for the first player to choose a side…
+          </div>
+        )}
 
-            {/* Chessboard panel */}
-            <section className="min-w-0 rounded-2xl border border-[#29372f] bg-[#121916] p-3 shadow-2xl shadow-black/20 sm:p-6">
+        {color && !result && (
+          <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_280px]">
 
-              {/* Opponent information */}
-              <div className="mb-4 flex items-center gap-3 rounded-xl border border-[#29372f] bg-[#0b0f0e] p-3 sm:p-4">
-                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-[#223329] text-2xl">
-                  ♚
-                </div>
-
-                <div className="min-w-0 flex-1">
-                  <p className="truncate font-semibold text-white">
-                    {opponent || 'Waiting for opponent'}
-                  </p>
-                  <p className="text-xs text-gray-500">
-                    {opponent
-                      ? 'Your opponent'
-                      : 'Share your room ID to invite a player'}
-                  </p>
-                </div>
-
-                <span className="rounded-full bg-[#18221d] px-3 py-1 text-xs text-green-400">
-                  {opponent ? 'Joined' : 'Waiting'}
-                </span>
+            <section className="space-y-4 rounded-2xl border border-[#29372f] bg-[#121916] p-4 sm:p-6">
+              <div className="rounded-xl bg-[#0b0f0e] p-4">
+                Opponent: <b>{opponent || 'Waiting for opponent — share the Room ID'}</b>
               </div>
 
-              {/* Incoming draw request */}
-              {isdrawnotification && (
-                <div className="mb-4 rounded-xl border border-green-800 bg-green-950/30 p-4">
-                  <p className="text-sm text-green-100">
-                    {drawmessage}
-                  </p>
+              {drawOffer && (
+                <div className="space-y-3 rounded-xl border border-green-700 p-4">
+                  <p>{drawOffer}</p>
 
-                  <div className="mt-3 flex flex-wrap gap-3">
-                    <button
-                      onClick={acceptdraw}
-                      className={primaryButton}
-                    >
-                      Accept Draw
-                    </button>
+                  <button
+                    className={`${button} mr-2 bg-green-500 text-black`}
+                    onClick={() => {
+                      if (send({ type: 'acceptance' })) setDrawOffer('');
+                    }}
+                  >
+                    Accept Draw
+                  </button>
 
-                    <button
-                      onClick={rejectdraw}
-                      className={secondaryButton}
-                    >
-                      Reject
-                    </button>
-                  </div>
+                  <button
+                    className={`${button} border border-gray-600`}
+                    onClick={() => {
+                      if (send({ type: 'rejection' })) setDrawOffer('');
+                    }}
+                  >
+                    Decline
+                  </button>
                 </div>
               )}
 
-              {/* Chessboard */}
-              <div className="mx-auto w-full max-w-[560px] overflow-hidden rounded-lg border-2 border-[#35483b] shadow-2xl shadow-black/40">
+              <div
+                className="mx-auto overflow-hidden rounded-lg border-2 border-[#35483b]"
+                style={{ width: boardWidth }}
+              >
                 <Chessboard
                   position={fen}
-                  onPieceDrop={handlemove}
-                  boardWidth={560}
+                  boardWidth={boardWidth}
                   boardOrientation={orientation}
+                  onPieceDrop={handleMove}
+                  onSquareClick={handleSquareClick}
+                  customSquareStyles={legalMoveHighlights}
                   customDarkSquareStyle={{ backgroundColor: '#538568' }}
                   customLightSquareStyle={{ backgroundColor: '#e5e7d5' }}
                   isDraggablePiece={({ piece }) => {
-                    if (
-                      !game ||
-                      !opponent ||
-                      !connected ||
-                      iswon ||
-                      isdraw ||
-                      isStalemate
-                    ) {
-                      return false;
-                    }
-
-                    const playerColor =
-                      orientation === 'white' ? 'w' : 'b';
-
-                    return (
-                      game.turn() === playerColor &&
-                      piece.startsWith(playerColor)
-                    );
+                    if (!canPlay) return false;
+                    const playerColor = color === 'white' ? 'w' : 'b';
+                    return gameRef.current.turn() === playerColor && piece.startsWith(playerColor);
                   }}
                 />
               </div>
 
-              {/* Current player */}
-              <div className="mt-4 flex items-center gap-3 rounded-xl border border-[#29372f] bg-[#0b0f0e] p-3 sm:p-4">
-                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-[#223329] text-2xl">
-                  ♟
-                </div>
-
-                <div className="min-w-0 flex-1">
-                  <p className="truncate font-semibold text-white">
-                    {name} (You)
-                  </p>
-                  <p className="text-xs text-gray-500">
-                    Playing as {orientation}
-                  </p>
-                </div>
-
-                <span className="rounded-full border border-[#35483b] px-3 py-1 text-xs capitalize text-gray-300">
-                  {orientation}
-                </span>
+              <div className="rounded-xl bg-[#0b0f0e] p-4">
+                {name} (You) — <b className="capitalize">{color}</b>
               </div>
             </section>
 
-            {/* Game controls sidebar */}
-            <aside className="flex flex-col gap-4">
+            <aside className="space-y-4">
+              <section className="space-y-2 rounded-2xl border border-[#29372f] bg-[#121916] p-5">
+                <h3 className="font-bold text-green-400">Game Status</h3>
 
-              {/* Game status */}
-              <section className="rounded-2xl border border-[#29372f] bg-[#121916] p-5">
-                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-green-500">
-                  Game Status
-                </p>
-
-                <h2 className="mt-3 text-xl font-bold text-white">
-                  {gameFinished
-                    ? 'Game Over'
-                    : !opponent
-                      ? 'Waiting for player'
-                      : !connected
-                        ? 'Reconnecting...'
-                        : game.turn() ===
-                            (orientation === 'white' ? 'w' : 'b')
-                          ? 'Your turn'
-                          : "Opponent's turn"}
-                </h2>
-
-                <p className="mt-2 text-sm leading-6 text-gray-400">
+                <p className="text-xl font-bold">
                   {!opponent
-                    ? 'Waiting for your opponent to join the room.'
-                    : gameFinished
-                      ? 'This game has ended.'
-                      : 'Make your move on the chessboard.'}
+                    ? 'Waiting for opponent'
+                    : status !== 'active'
+                      ? 'Waiting for players'
+                      : yourTurn
+                        ? 'Your turn'
+                        : "Opponent's turn"}
                 </p>
               </section>
 
-              {/* Room details */}
-              <section className="rounded-2xl border border-[#29372f] bg-[#121916] p-5">
-                <h3 className="font-bold text-white">
-                  Room Details
-                </h3>
+              <section className="space-y-3 rounded-2xl border border-[#29372f] bg-[#121916] p-5">
+                <h3 className="font-bold">Game Actions</h3>
 
-                <div className="mt-4 space-y-4">
-                  <div>
-                    <p className="text-xs text-gray-500">Player</p>
-                    <p className="mt-1 break-words text-sm font-medium text-gray-200">
-                      {name}
-                    </p>
-                  </div>
+                <button
+                  disabled={!canPlay || drawRequested}
+                  className={`${button} w-full border border-green-700`}
+                  onClick={() => {
+                    if (send({ type: 'request' })) {
+                      setDrawRequested(true);
+                      setNotice('Draw offer sent.');
+                    }
+                  }}
+                >
+                  {drawRequested ? 'Draw Requested…' : 'Offer a Draw'}
+                </button>
 
-                  <div>
-                    <p className="text-xs text-gray-500">Opponent</p>
-                    <p className="mt-1 break-words text-sm font-medium text-gray-200">
-                      {opponent || 'Not connected yet'}
-                    </p>
-                  </div>
+                <button
+                  disabled={!canPlay}
+                  className={`${button} w-full border border-red-700 text-red-400`}
+                  onClick={() => send({ type: 'resign' })}
+                >
+                  Resign Game
+                </button>
 
-                  <div>
-                    <p className="text-xs text-gray-500">Room ID</p>
-                    <p className="mt-1 break-all text-sm font-medium text-green-400">
-                      {roomid}
-                    </p>
-                  </div>
-                </div>
-              </section>
-
-              {/* Draw and resign controls */}
-              <section className="rounded-2xl border border-[#29372f] bg-[#121916] p-5">
-                <h3 className="font-bold text-white">
-                  Game Actions
-                </h3>
-
-                <div className="mt-4 flex flex-col gap-3">
-                  <button
-                    onClick={handledraw}
-                    disabled={!opponent || !connected || drawrequest || gameFinished}
-                    className={secondaryButton}
-                  >
-                    {drawrequest ? 'Draw Requested...' : 'Offer a Draw'}
-                  </button>
-
-                  <button
-                    onClick={handleresign}
-                    disabled={!opponent || !connected || gameFinished}
-                    className="rounded-xl border border-red-900 bg-red-950/30 px-5 py-3 font-semibold text-red-400 transition hover:bg-red-900/40 disabled:cursor-not-allowed disabled:opacity-40"
-                  >
-                    Resign Game
-                  </button>
-                </div>
-
-                {rejectmessage && (
-                  <p className="mt-3 text-sm text-yellow-400">
-                    {rejectmessage}
-                  </p>
-                )}
+                {notice && <p className="text-sm text-yellow-400">{notice}</p>}
               </section>
             </aside>
           </div>
         )}
 
-        {/* Game results */}
-        {(iswon || isdraw || isStalemate || isresign) && (
-          <section className="mx-auto w-full max-w-xl rounded-2xl border border-[#29372f] bg-[#121916] p-8 text-center shadow-2xl">
-            <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-green-950/50 text-4xl text-green-400">
-              {isdraw || isStalemate ? '🤝' : '♛'}
-            </div>
+        {result && (
+          <section className="mx-auto max-w-xl space-y-4 rounded-2xl border border-[#29372f] bg-[#121916] p-8 text-center">
+            <h2 className="text-3xl font-bold">Game Finished</h2>
 
-            <h2 className="mt-5 text-3xl font-extrabold text-white">
-              {isdraw
-                ? 'Game Drawn'
-                : isStalemate
-                  ? 'Stalemate'
-                  : 'Game Finished'}
-            </h2>
-
-            {wonbyresign && (
-              <p className="mt-3 text-sm text-gray-400">
-                {wonbyresign}
-              </p>
-            )}
-
-            {iswon && (
-              <p className="mt-3 text-lg font-semibold text-green-400">
-                {winner} has won the game.
-              </p>
-            )}
-
-            {isdraw && (
-              <p className="mt-3 text-gray-400">
-                Draw between both players.
-              </p>
-            )}
-
-            {isStalemate && (
-              <p className="mt-3 text-gray-400">
-                The game ended in stalemate.
-              </p>
-            )}
-
-            {isresign && !iswon && (
-              <p className="mt-3 text-gray-400">
-                You have resigned from the game.
-              </p>
-            )}
+            <p>{resultText()} — {result.reason}</p>
 
             <Link
-              to="/"
-              className="mt-7 inline-flex rounded-xl bg-green-500 px-6 py-3 font-bold text-black transition hover:bg-green-400"
+              to="/home"
+              className="inline-block rounded-xl bg-green-500 px-6 py-3 font-bold text-black"
             >
               Back to Home
             </Link>
           </section>
         )}
 
-        {/* Footer */}
-        <footer className="mt-4 border-t border-[#29372f] py-5 text-center text-sm text-gray-500">
-          Chess<span className="text-green-500">Zone</span>
-          <span className="mx-2">·</span>
-          Every move matters.
+        <footer className="border-t border-[#29372f] pt-5 text-center text-gray-500">
+          ChessZone · Every move matters.
         </footer>
       </div>
     </div>
   );
 }
-
-export default Game;

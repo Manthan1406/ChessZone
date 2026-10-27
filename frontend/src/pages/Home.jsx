@@ -1,154 +1,135 @@
+import { useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import { clearSession, getUser } from '../auth.js';
 
-import React, { useState } from 'react';
+export default function Home() {
+  const [gameId, setGameId] = useState('');
+  const [error, setError] = useState('');
+  const navigate = useNavigate();
+  const user = getUser();
 
-function Home() {
-  const [name, setname] = useState('');
-  const [roomid, setroomid] = useState('');
+  const joinGame = (event) => {
+    event.preventDefault();
+    setError('');
 
-  const handleclick = () => {
-    if (!name.trim() || !roomid.trim()) {
-      alert('Please enter your name and game room ID');
+    const id = gameId.trim();
+
+    if (!id) {
+      setError('Please enter a Game ID.');
       return;
     }
 
-    window.location.href = `/game?name=${encodeURIComponent(name.trim())}&id=${encodeURIComponent(roomid.trim())}`;
+    if (id.length > 50) {
+      setError('Game ID cannot exceed 50 characters.');
+      return;
+    }
+
+    navigate(`/game?id=${encodeURIComponent(id)}`);
+  };
+
+  const randomRoom = () => {
+    setGameId(Math.random().toString(36).slice(2, 8));
+    setError('');
+  };
+
+  const logout = () => {
+    clearSession();
+    navigate('/login', { replace: true });
   };
 
   return (
-    <div className="min-h-screen bg-[#0b0f0e] px-4 py-8 text-gray-100 sm:px-8">
+    <div className="min-h-screen bg-[#0b0f0e] px-4 py-10 text-gray-100">
+      <div className="mx-auto max-w-4xl">
 
-      {/* Navigation */}
-      <nav className="mx-auto flex max-w-6xl items-center justify-between border-b border-[#29372f] pb-5">
-        <h2 className="text-2xl font-extrabold tracking-tight text-white">
-          ♞ Chess<span className="text-green-500">Zone</span>
-        </h2>
+        <header className="mb-16 flex flex-wrap items-center justify-between gap-4">
+          <Link to="/home" className="text-3xl font-extrabold">
+            ♞ Chess<span className="text-green-500">Zone</span>
+          </Link>
 
-        <span className="rounded-full border border-green-800 bg-green-950/50 px-4 py-2 text-sm text-green-400">
-          Online Chess
-        </span>
-      </nav>
-
-      {/* Main content */}
-      <main className="mx-auto grid max-w-6xl items-center gap-12 py-12 md:grid-cols-2 md:py-20">
-
-        {/* Left section */}
-        <section>
-          <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-green-900 bg-green-950/40 px-4 py-2 text-sm text-green-400">
-            <span className="h-2 w-2 rounded-full bg-green-400"></span>
-            Challenge your friends
-          </div>
-
-          <h1 className="text-5xl font-black leading-tight tracking-tight text-white sm:text-7xl">
-            Your Next Move
-            <span className="block text-green-500">Starts Here.</span>
-          </h1>
-
-          <p className="mt-6 max-w-lg text-base leading-8 text-gray-400 sm:text-lg">
-            Play chess in real time with your friends. Create a room,
-            share your room ID, and let the battle of minds begin.
-          </p>
-
-          <div className="mt-8 grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <div className="rounded-xl border border-[#29372f] bg-[#121916] p-4">
-              <div className="mb-2 text-2xl text-green-400">♟</div>
-              <h3 className="font-bold text-white">Real-time Gameplay</h3>
-              <p className="mt-1 text-sm text-gray-400">
-                Play against friends online.
-              </p>
-            </div>
-
-            <div className="rounded-xl border border-[#29372f] bg-[#121916] p-4">
-              <div className="mb-2 text-2xl text-green-400">⚡</div>
-              <h3 className="font-bold text-white">Simple to Join</h3>
-              <p className="mt-1 text-sm text-gray-400">
-                Enter a name and room ID to get started.
-              </p>
-            </div>
-          </div>
-        </section>
-
-        {/* Join game card */}
-        <section className="rounded-2xl border border-[#29372f] bg-[#121916] p-6 shadow-2xl shadow-green-950/20 sm:p-9">
-          <div className="mb-7">
-            <p className="text-sm font-semibold uppercase tracking-[0.2em] text-green-500">
-              Ready to play?
-            </p>
-
-            <h2 className="mt-3 text-3xl font-extrabold text-white">
-              Enter the Arena
-            </h2>
-
-            <p className="mt-2 text-sm leading-6 text-gray-400">
-              Enter your player details to join your chess game.
-            </p>
-          </div>
-
-          <form
-            className="space-y-5"
-            onSubmit={(e) => {
-              e.preventDefault();
-              handleclick();
-            }}
-          >
-            <div>
-              <label htmlFor="playerName" className="mb-2 block text-sm font-medium text-gray-300">
-                Player Name
-              </label>
-
-              <input
-                id="playerName"
-                type="text"
-                placeholder="Enter your name"
-                autoComplete="nickname"
-                maxLength={30}
-                className="w-full rounded-xl border border-[#35483b] bg-[#0b0f0e] px-4 py-3.5 text-white outline-none transition placeholder:text-gray-600 focus:border-green-500 focus:ring-2 focus:ring-green-500/20"
-                value={name}
-                onChange={(e) => setname(e.target.value)}
-                required
-              />
-            </div>
-
-            <div>
-              <label htmlFor="roomId" className="mb-2 block text-sm font-medium text-gray-300">
-                Game Room ID
-              </label>
-
-              <input
-                id="roomId"
-                type="text"
-                placeholder="Enter room ID"
-                className="w-full rounded-xl border border-[#35483b] bg-[#0b0f0e] px-4 py-3.5 text-white outline-none transition placeholder:text-gray-600 focus:border-green-500 focus:ring-2 focus:ring-green-500/20"
-                value={roomid}
-                onChange={(e) => setroomid(e.target.value)}
-                required
-              />
-            </div>
-
+          <div className="flex items-center gap-3">
+            <span className="text-gray-400">
+              {user?.displayName || user?.username}
+            </span>
             <button
-              type="submit"
-              className="flex w-full items-center justify-center gap-3 rounded-xl bg-green-500 px-5 py-4 font-bold text-black shadow-lg shadow-green-950/30 transition hover:bg-green-400 active:scale-[0.98]"
+              onClick={logout}
+              className="rounded-xl border border-gray-600 px-4 py-2 transition hover:border-red-500"
             >
-              Enter Chess Room
-              <span className="text-xl">→</span>
+              Log out
             </button>
-          </form>
-
-          <div className="mt-6 flex items-center justify-center gap-2 text-xs text-gray-500">
-            <span className="h-2 w-2 rounded-full bg-green-500"></span>
-            Your next move could change everything.
           </div>
-        </section>
-      </main>
+        </header>
 
-      {/* Footer */}
-      <footer className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-3 border-t border-[#29372f] py-6 text-sm text-gray-500 sm:flex-row">
-        <p>
-          ♞ Chess<span className="text-green-500">Zone</span>
-        </p>
-        <p>Built for chess lovers.</p>
-      </footer>
+        <main className="grid gap-10 md:grid-cols-2 md:items-center">
+          <section>
+            <p className="mb-4 font-bold uppercase tracking-widest text-green-400">
+              Online Multiplayer Chess
+            </p>
+
+            <h1 className="mb-6 text-5xl font-extrabold leading-tight">
+              Every move
+              <span className="block text-green-500">matters.</span>
+            </h1>
+
+            <p className="text-lg leading-8 text-gray-400">
+              Challenge your friends, make your moves, and prove your
+              strategy on ChessZone.
+            </p>
+          </section>
+
+          <section className="rounded-2xl border border-[#29372f] bg-[#121916] p-6 sm:p-8">
+            <h2 className="mb-3 text-2xl font-extrabold">Game Arena</h2>
+
+            <p className="mb-6 text-gray-400">
+              Enter a Game ID to join a match. Share the same ID with a friend so you land in the same room.
+            </p>
+
+            <form onSubmit={joinGame} className="space-y-5">
+              <div>
+                <label htmlFor="gameId" className="mb-2 block font-semibold">
+                  Game ID
+                </label>
+
+                <div className="flex gap-2">
+                  <input
+                    id="gameId"
+                    type="text"
+                    value={gameId}
+                    onChange={(event) => setGameId(event.target.value)}
+                    placeholder="Enter Game ID"
+                    maxLength={50}
+                    autoComplete="off"
+                    className="w-full rounded-xl border border-[#35483b] bg-[#0b0f0e] px-4 py-3 outline-none transition focus:border-green-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={randomRoom}
+                    className="whitespace-nowrap rounded-xl border border-green-700 px-4 py-3"
+                  >
+                    New ID
+                  </button>
+                </div>
+              </div>
+
+              {error && (
+                <p className="rounded-lg border border-red-700 bg-red-950/40 p-3 text-sm text-red-300">
+                  {error}
+                </p>
+              )}
+
+              <button
+                type="submit"
+                className="w-full rounded-xl bg-green-500 px-6 py-3 font-bold text-black transition hover:bg-green-400"
+              >
+                Join Game
+              </button>
+            </form>
+          </section>
+        </main>
+
+        <footer className="mt-16 border-t border-[#29372f] pt-6 text-center text-sm text-gray-500">
+          ChessZone · Every move matters.
+        </footer>
+      </div>
     </div>
   );
 }
-
-export default Home;
