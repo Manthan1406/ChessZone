@@ -301,11 +301,17 @@ export default function Game() {
 
   const resultText = () => {
     if (!result) return '';
-    if (result.result === 'draw') return 'Game drawn';
-    if (result.result === 'abandoned') return 'Game abandoned';
-    if (result.result === 'white_win') return 'White wins';
-    if (result.result === 'black_win') return 'Black wins';
-    return 'Game finished';
+
+    if (result.result === 'draw') return 'DRAW!';
+    if (result.result === 'abandoned') return 'GAME ABANDONED';
+
+    const winnerColor =
+      result.result === 'white_win' ? 'white' :
+        result.result === 'black_win' ? 'black' : null;
+
+    if (!winnerColor) return 'GAME FINISHED';
+
+    return color === winnerColor ? 'YOU WIN!' : 'YOU LOSE!';
   };
 
   return (

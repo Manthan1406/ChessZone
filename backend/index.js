@@ -105,23 +105,90 @@ app.get('/api/health', async (req, res) => {
   }
 });
 
-app.get('/api/history/:username', async (req, res) => {
+// Get the logged-in user's profile and statistics
+app.get('/api/profile', requireAuth, async (req, res) => {
   try {
     const [rows] = await pool.execute(
-      `SELECT mh.room_id, mh.color, mh.result, mh.played_at, p2.username AS opponent, gr.reason
-       FROM match_history mh
-       JOIN players p ON p.id = mh.player_id
-       LEFT JOIN players p2 ON p2.id = mh.opponent_player_id
-       LEFT JOIN game_results gr ON gr.room_id = mh.room_id
-       WHERE p.username = ? ORDER BY mh.played_at DESC LIMIT 100`,
-      [req.params.username]
+      `SELECT
+        p.id,
+        p.username,
+        p.display_name,
+        p.created_at,
+        COUNT(mh.room_id) AS gamesPlayed,
+        COALESCE(SUM(mh.result = 'win'), 0) AS wins,
+        COALESCE(SUM(mh.result = 'loss'), 0) AS losses,
+        COALESCE(SUM(mh.result = 'draw'), 0) AS draws
+       FROM players p
+       LEFT JOIN match_history mh
+         ON mh.player_id = p.id
+         AND mh.result IN ('win', 'loss', 'draw')
+       WHERE p.id = ?
+       GROUP BY p.id, p.username, p.display_name, p.created_at`,
+      [req.player.id]
     );
-    res.json({ history: rows });
-  } catch {
-    res.status(500).json({ error: 'Could not load history' });
+
+    if (!rows.length) {
+      return res.status(404).json({ error: 'Player not found' });
+    }
+
+    const p = rows[0];
+    const gamesPlayed = Number(p.gamesPlayed);
+    const wins = Number(p.wins);
+    const losses = Number(p.losses);
+    const draws = Number(p.draws);
+
+    res.json({
+      profile: {
+        id: p.id,
+        username: p.username,
+        displayName: p.display_name,
+        createdAt: p.created_at,
+        gamesPlayed,
+        wins,
+        losses,
+        draws,
+        winRate: gamesPlayed
+          ? Number(((wins / gamesPlayed) * 100).toFixed(1))
+          : 0
+      }
+    });
+  } catch (error) {
+    console.error('Profile error:', error.message);
+    res.status(500).json({
+      error: 'Could not load profile'
+    });
   }
 });
 
+app.get('/api/history', requireAuth, async (req, res) => {
+  try {
+    const [rows] = await pool.execute(
+      `SELECT
+        mh.room_id AS roomId,
+        mh.color,
+        mh.result,
+        mh.played_at AS playedAt,
+        p2.username AS opponent,
+        gr.reason
+       FROM match_history mh
+       LEFT JOIN players p2
+         ON p2.id = mh.opponent_player_id
+       LEFT JOIN game_results gr
+         ON gr.room_id = mh.room_id
+       WHERE mh.player_id = ?
+       ORDER BY mh.played_at DESC
+       LIMIT 100`,
+      [req.player.id]
+    );
+
+    res.json({ history: rows });
+  } catch (error) {
+    console.error('History error:', error.message);
+    res.status(500).json({
+      error: 'Could not load match history'
+    });
+  }
+});
 /* ------------------------------ WebSocket game ----------------------------- */
 
 const server = http.createServer(app);
@@ -277,6 +344,22 @@ async function authenticate(token) {
   const player = players[0];
   if (!player || player.username !== claims.username) throw Error('Account not found. Please log in again.');
   return player;
+}
+
+async function requireAuth(req, res, next) {
+  try {
+    const header = req.headers.authorization || '';
+    const token = header.startsWith('Bearer ')
+      ? header.slice(7)
+      : '';
+
+    req.player = await authenticate(token);
+    next();
+  } catch (error) {
+    res.status(401).json({
+      error: error.message || 'Authentication required'
+    });
+  }
 }
 
 async function join(ws, msg) {
